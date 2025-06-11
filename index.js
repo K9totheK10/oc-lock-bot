@@ -1,77 +1,88 @@
-const { Client, GatewayIntentBits } = require('discord.js');
 const fs = require('fs');
-require('dotenv').config();
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const path = './data.json';
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+// Load or create data.json if it doesn't exist
+let data = { ocs: {} };
+if (fs.existsSync(path)) {
+  data = JSON.parse(fs.readFileSync(path, 'utf8'));
+} else {
+  fs.writeFileSync(path, JSON.stringify(data, null, 2));
+}
 
-let data = require('./data.json');
+// Create a new client instance
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Channel],
+});
+
+const prefix = '!';
 
 client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Logged in as ${client.user.tag}!`);
 });
 
-client.on('messageCreate', message => {
-    if (!message.content.startsWith('!') || message.author.bot) return;
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return; // ignore bot messages
+  if (!message.content.startsWith(prefix)) return;
 
-    const args = message.content.slice(1).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
+  const args = message.content.slice(prefix.length).trim().split(/\s+/);
+  const command = args.shift().toLowerCase();
 
-    // Add OC
-    if (command === 'addoc' && message.member.permissions.has('Administrator')) {
-        const [name] = args;
-        if (!name) return message.reply("You must provide a name.");
-        data.ocs[name] = {
-            stats: {
-                shooting: 50,
-                passing: 50,
-                dribbling: 50,
-                speed: 50,
-                defense: 50,
-                offense: 50
-            },
-            moves: [],
-            flowState: false
-        };
-        fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
-        message.reply(`✅ OC ${name} added.`);
+  if (command === 'addmove') {
+    // Admin check
+    if (!message.member.permissions.has('Administrator')) {
+      return message.reply("You don't have permission to use this command.");
     }
 
-    // Train stat
-    if (command === 'train' && message.member.permissions.has('Administrator')) {
-        const [name, stat] = args;
-        const oc = data.ocs[name];
-        if (!oc) return message.reply("OC not found.");
-        if (!oc.stats[stat]) return message.reply("Invalid stat.");
-        let gain = 0;
-        const current = oc.stats[stat];
-        if (current >= 70) return message.reply("Stat is capped.");
-        if (current < 65) gain = Math.floor(Math.random() * 4) + 1;
-        else gain = Math.floor(Math.random() * 2) + 1;
-        oc.stats[stat] += gain;
-        fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
-        message.reply(`${name}'s **${stat}** increased by ${gain}. New stat: ${oc.stats[stat]}`);
+    const [name, move] = args;
+    if (!name || !move) return message.reply('Usage: !addmove <ocName> <moveName>');
+
+    const oc = data.ocs[name];
+    if (!oc) return message.reply(`OC "${name}" not found.`);
+
+    if (!oc.moves) oc.moves = [];
+    if (oc.moves.includes(move)) {
+      return message.reply(`"${move}" is already a move of ${name}.`);
     }
 
-    // Match preview
-    if (command === 'matchpreview') {
-        const names = args;
-        const results = names.map(name => {
-            const oc = data.ocs[name];
-            if (!oc) return `${name}: Not Found`;
-            return `${name} [S: ${oc.stats.shooting}, P: ${oc.stats.passing}, D: ${oc.stats.dribbling}, Sp: ${oc.stats.speed}, Def: ${oc.stats.defense}, O: ${oc.stats.offense}]`;
-        });
-        message.reply("📊 Match Preview:\n" + results.join("\n"));
+    oc.moves.push(move);
+    fs.writeFileSync(path, JSON.stringify(data, null, 2));
+    message.reply(`Move "${move}" added to ${name}.`);
+  }
+
+  else if (command === 'editstat') {
+    if (!message.member.permissions.has('Administrator')) {
+      return message.reply("You don't have permission to use this command.");
     }
 
-    // Toggle Flow State
-    if (command === 'flow') {
-        const [name] = args;
-        const oc = data.ocs[name];
-        if (!oc) return message.reply("OC not found.");
-        oc.flowState = !oc.flowState;
-        fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
-        message.reply(`${name}'s Flow State is now **${oc.flowState ? 'ACTIVE' : 'INACTIVE'}**`);
+    const [name, stat, value] = args;
+    if (!name || !stat || !value) {
+      return message.reply('Usage: !editstat <ocName> <stat> <newValue>');
     }
+
+    const oc = data.ocs[name];
+    if (!oc) return message.reply(`OC "${name}" not found.`);
+    if (!oc.stats || !oc.stats.hasOwnProperty(stat)) {
+      return message.reply(`Invalid stat "${stat}".`);
+    }
+
+    const newValue = parseInt(value, 10);
+    if (isNaN(newValue) || newValue < 0 || newValue > 100) {
+      return message.reply('Stat must be a number between 0 and 100.');
+    }
+
+    oc.stats[stat] = newValue;
+    fs.writeFileSync(path, JSON.stringify(data, null, 2));
+    message.reply(`${name}'s ${stat} is now ${newValue}.`);
+  }
+
+  // You can add other commands here...
+
 });
 
-client.login(process.env.TOKEN);
+client.login('YOUR_BOT_TOKEN_HERE');

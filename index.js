@@ -1,88 +1,104 @@
 const fs = require('fs');
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
-const path = './data.json';
+require('dotenv').config();
+const { Client, GatewayIntentBits } = require('discord.js');
 
-// Load or create data.json if it doesn't exist
-let data = { ocs: {} };
-if (fs.existsSync(path)) {
-  data = JSON.parse(fs.readFileSync(path, 'utf8'));
-} else {
-  fs.writeFileSync(path, JSON.stringify(data, null, 2));
+const client = new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+});
+
+let data = require('./data.json');
+
+function saveData() {
+    fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
 }
 
-// Create a new client instance
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-  partials: [Partials.Channel],
-});
-
-const prefix = '!';
-
 client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}!`);
+    console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return; // ignore bot messages
-  if (!message.content.startsWith(prefix)) return;
+client.on('messageCreate', message => {
+    if (!message.content.startsWith('!') || message.author.bot) return;
 
-  const args = message.content.slice(prefix.length).trim().split(/\s+/);
-  const command = args.shift().toLowerCase();
+    const args = message.content.slice(1).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
 
-  if (command === 'addmove') {
-    // Admin check
-    if (!message.member.permissions.has('Administrator')) {
-      return message.reply("You don't have permission to use this command.");
+    if (command === 'addoc' && message.member.permissions.has('Administrator')) {
+        const [name] = args;
+        if (!name) return message.reply("You must provide a name.");
+        if (data.ocs[name]) return message.reply("OC already exists.");
+        data.ocs[name] = {
+            stats: { shooting: 50, passing: 50, dribbling: 50, speed: 50, defense: 50, offense: 50 },
+            moves: [],
+            flowState: false,
+            trainingHistory: [],
+            weeklyPoints: 0
+        };
+        saveData();
+        message.reply(`OC ${name} added.`);
     }
 
-    const [name, move] = args;
-    if (!name || !move) return message.reply('Usage: !addmove <ocName> <moveName>');
+    if (command === 'train' && message.member.permissions.has('Administrator')) {
+        const [name, stat] = args;
+        const oc = data.ocs[name];
+        if (!oc) return message.reply("OC not found.");
+        if (!oc.stats[stat]) return message.reply("Invalid stat.");
+        if (oc.weeklyPoints >= 10) return message.reply(`${name} has reached the weekly training limit (10 points).`);
+        if (oc.trainingHistory[oc.trainingHistory.length - 1] === stat) return message.reply("Cannot train the same stat twice in a row.");
 
-    const oc = data.ocs[name];
-    if (!oc) return message.reply(`OC "${name}" not found.`);
-
-    if (!oc.moves) oc.moves = [];
-    if (oc.moves.includes(move)) {
-      return message.reply(`"${move}" is already a move of ${name}.`);
+        const gain = Math.floor(Math.random() * 2) + 1;
+        const current = oc.stats[stat];
+        if (current >= 70) return message.reply("Stat is capped at 70.");
+        oc.stats[stat] = Math.min(70, current + gain);
+        oc.trainingHistory.push(stat);
+        oc.weeklyPoints += gain;
+        saveData();
+        message.reply(`${name} trained ${stat} and gained +${gain}. New stat: ${oc.stats[stat]}. Weekly points: ${oc.weeklyPoints}/10`);
     }
 
-    oc.moves.push(move);
-    fs.writeFileSync(path, JSON.stringify(data, null, 2));
-    message.reply(`Move "${move}" added to ${name}.`);
-  }
-
-  else if (command === 'editstat') {
-    if (!message.member.permissions.has('Administrator')) {
-      return message.reply("You don't have permission to use this command.");
+    if (command === 'resetweek' && message.member.permissions.has('Administrator')) {
+        for (const name in data.ocs) {
+            data.ocs[name].weeklyPoints = 0;
+            data.ocs[name].trainingHistory = [];
+        }
+        saveData();
+        message.reply("✅ Weekly training limits and histories reset.");
     }
 
-    const [name, stat, value] = args;
-    if (!name || !stat || !value) {
-      return message.reply('Usage: !editstat <ocName> <stat> <newValue>');
+    if (command === 'flow') {
+        const [name] = args;
+        const oc = data.ocs[name];
+        if (!oc) return message.reply("OC not found.");
+        oc.flowState = !oc.flowState;
+        saveData();
+        message.reply(`${name}'s Flow State is now ${oc.flowState ? 'ACTIVE' : 'INACTIVE'}`);
     }
 
-    const oc = data.ocs[name];
-    if (!oc) return message.reply(`OC "${name}" not found.`);
-    if (!oc.stats || !oc.stats.hasOwnProperty(stat)) {
-      return message.reply(`Invalid stat "${stat}".`);
+    if (command === 'matchpreview') {
+        const names = args;
+        const results = names.map(name => {
+            const oc = data.ocs[name];
+            if (!oc) return `${name}: Not Found`;
+            return `${name} [S:${oc.stats.shooting}, P:${oc.stats.passing}, D:${oc.stats.dribbling}, Sp:${oc.stats.speed}, Def:${oc.stats.defense}, O:${oc.stats.offense}]`;
+        });
+        message.reply("📊 Match Preview:\n" + results.join("\n"));
     }
 
-    const newValue = parseInt(value, 10);
-    if (isNaN(newValue) || newValue < 0 || newValue > 100) {
-      return message.reply('Stat must be a number between 0 and 100.');
+    if (command === 'listocs') {
+        const ocNames = Object.keys(data.ocs);
+        if (ocNames.length === 0) return message.reply("No OCs found.");
+        message.reply("📁 OC List:\n" + ocNames.map(name => `- ${name}`).join("\n"));
     }
 
-    oc.stats[stat] = newValue;
-    fs.writeFileSync(path, JSON.stringify(data, null, 2));
-    message.reply(`${name}'s ${stat} is now ${newValue}.`);
-  }
-
-  // You can add other commands here...
-
+    if (command === 'ocinfo') {
+        const [name] = args;
+        const oc = data.ocs[name];
+        if (!oc) return message.reply("OC not found.");
+        message.reply(`📋 OC: ${name}
+Stats: Shooting: ${oc.stats.shooting}, Passing: ${oc.stats.passing}, Dribbling: ${oc.stats.dribbling}, Speed: ${oc.stats.speed}, Defense: ${oc.stats.defense}, Offense: ${oc.stats.offense}
+Moves: ${oc.moves.length > 0 ? oc.moves.join(", ") : "None"}
+Flow State: ${oc.flowState ? "ACTIVE" : "INACTIVE"}
+Weekly Points: ${oc.weeklyPoints}/10`);
+    }
 });
 
-client.login('YOUR_BOT_TOKEN_HERE');
+client.login(process.env.TOKEN);
